@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Saturday Warning</title>
+    <title>Saturday Intercept</title>
     <link rel="stylesheet" href="/styles.css">
     <script type="importmap">
       {
@@ -16,11 +16,20 @@
   </head>
   <body class="warning-page">
     <main class="warning-shell">
-      <section class="warning-track" aria-hidden="true">
-        <span></span><span></span><span></span><span></span>
-      </section>
-      <section class="warning-board">
-        <div class="warning-mascot-wrap">
+      <header class="intercept-topbar">
+        <div>
+          <p class="eyebrow">runner-mode intercept</p>
+          <strong>Saturday Browser Guard</strong>
+        </div>
+        <span id="warningSource" class="badge bad">analyzing</span>
+      </header>
+
+      <section class="intercept-board">
+        <div class="intercept-visual" aria-hidden="true">
+          <div class="signal-card">
+            <span>risk</span>
+            <strong id="visualRisk">--</strong>
+          </div>
           <div
             class="mascot-viewer warning-mascot"
             data-model="/asset/player1.glb"
@@ -34,14 +43,17 @@
             <img class="model-fallback" src="/assets/mascot.svg" alt="">
           </div>
         </div>
-        <div class="warning-copy">
-          <p class="eyebrow danger">runner-mode intercept</p>
+
+        <article class="intercept-copy">
+          <p class="eyebrow">security alert</p>
           <h1>Suspicious Website Detected</h1>
           <p id="warningSummary" class="warning-summary">Saturday is checking this route before you continue.</p>
+
           <div class="url-box">
             <span>Detected URL</span>
             <strong id="detectedUrl">--</strong>
           </div>
+
           <div class="risk-meter">
             <div>
               <span>Risk Score</span>
@@ -49,26 +61,50 @@
             </div>
             <div class="meter"><i id="riskBar"></i></div>
           </div>
+
+          <div class="intel-grid">
+            <div class="intel-box">
+              <span>Severity</span>
+              <strong id="warningSeverity">--</strong>
+            </div>
+            <div class="intel-box">
+              <span>Agent</span>
+              <strong id="warningAgent">Saturday</strong>
+            </div>
+            <div class="intel-box">
+              <span>Action</span>
+              <strong id="warningAction">Block</strong>
+            </div>
+          </div>
+
           <div id="officialBox" class="official-box hidden">
             <span>Official route</span>
             <strong id="officialUrl"></strong>
           </div>
+
           <ul id="warningReasons" class="warning-reasons"></ul>
+
           <div class="warning-actions">
             <button id="leaveSite" class="primary-btn">Leave Site</button>
             <button id="continueSite" class="danger-btn">Continue Anyway</button>
           </div>
-        </div>
+        </article>
       </section>
     </main>
+
     <script type="module" src="/mascot-viewer.js"></script>
     <script>
       const params = new URLSearchParams(location.search);
-      const targetUrl = params.get("url") || "https://g00gle-login.xyz/accounts/verify";
+      const targetUrl = params.get("url") || "https://secure-login.sentinelai-verification.com/auth/login";
       const detectedUrl = document.getElementById("detectedUrl");
       const riskScore = document.getElementById("riskScore");
+      const visualRisk = document.getElementById("visualRisk");
       const riskBar = document.getElementById("riskBar");
       const warningSummary = document.getElementById("warningSummary");
+      const warningSource = document.getElementById("warningSource");
+      const warningSeverity = document.getElementById("warningSeverity");
+      const warningAgent = document.getElementById("warningAgent");
+      const warningAction = document.getElementById("warningAction");
       const officialBox = document.getElementById("officialBox");
       const officialUrl = document.getElementById("officialUrl");
       const reasons = document.getElementById("warningReasons");
@@ -78,18 +114,29 @@
         const response = await fetch("/api/check-url", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({url: targetUrl, source: "dashboard"})
+          body: JSON.stringify({url: targetUrl, source: params.get("from") === "extension" ? "extension" : "dashboard"})
         });
         const data = await response.json();
+        const hackarena = data.hackarena || null;
         riskScore.textContent = `${data.risk_score}/100`;
+        visualRisk.textContent = data.risk_score;
         riskBar.style.width = `${Math.max(8, data.risk_score)}%`;
-        warningSummary.textContent = data.brand
-          ? `This website appears to impersonate ${data.brand}.`
-          : "This website has enough suspicious signals that Saturday paused navigation.";
+        warningSeverity.textContent = hackarena?.threat_severity || (data.risk_score >= 85 ? "CRITICAL" : data.risk_score >= 70 ? "HIGH" : "MEDIUM");
+        warningAgent.textContent = hackarena?.assigned_agent || "Saturday Risk Engine";
+        warningAction.textContent = data.allow_navigation ? "Allowed once" : "Block";
+        warningSource.textContent = hackarena ? "HackArena intel" : "Saturday rules";
+        warningSource.className = `badge ${data.risk_score >= 70 ? "bad" : "warn"}`;
+        warningSummary.textContent = hackarena
+          ? "HackArena threat intelligence confirmed this route as malicious."
+          : data.brand
+            ? `This website appears to impersonate ${data.brand}.`
+            : "This website has enough suspicious signals that Saturday paused navigation.";
+
         if (data.official_url) {
           officialBox.classList.remove("hidden");
           officialUrl.textContent = data.official_url;
         }
+
         reasons.innerHTML = "";
         for (const reason of data.reasons || []) {
           const item = document.createElement("li");
@@ -113,6 +160,8 @@
 
       loadRisk().catch(() => {
         warningSummary.textContent = "Saturday could not reach the local risk engine, so it recommends leaving this site.";
+        warningSource.textContent = "offline";
+        warningSeverity.textContent = "UNKNOWN";
       });
     </script>
   </body>

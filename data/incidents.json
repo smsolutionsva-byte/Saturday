@@ -133,6 +133,50 @@
     "dedupe_key": "demo:Campus Events <events@hackathon.local>:Sponsor booth schedule"
   },
   {
+    "id": "mail_20260612140201_288",
+    "kind": "email",
+    "source": "imap",
+    "title": "Microsoft email detected",
+    "sender": "xAI <noreply@x.ai>",
+    "subject": "New login to your xAI account",
+    "snippet": "<!doctype html>\r\n<html lang=\"en\">\r\n  <head>\r\n    <title></title>\r\n    <!--[if !mso]><!-- -->\r\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\r\n    <!--<![endif]-->\r\n    <meta http-equiv=\"Content-Type\" content",
+    "risk_score": 46,
+    "reasons": [
+      "Message references Microsoft, but sender is not an official Microsoft domain",
+      "Credential or account-verification request detected"
+    ],
+    "brand": "Microsoft",
+    "official_url": "https://microsoft.com",
+    "attachments": [],
+    "status": "pending",
+    "action_log": [],
+    "created_at": "2026-06-12T08:32:01+00:00",
+    "time_label": "14:02",
+    "dedupe_key": "imap:xAI <noreply@x.ai>:New login to your xAI account:17"
+  },
+  {
+    "id": "mail_20260612134153_397",
+    "kind": "email",
+    "source": "imap",
+    "title": "Google email detected",
+    "sender": "\"Locos at Locofy.ai\" <no-reply@locofy.ai>",
+    "subject": "Welcome to Locofy! Let’s get shipping",
+    "snippet": "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml/DTD/xhtml1-transitional.dtd\">\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n  <head>\r\n    <meta http-equiv=\"Content-Ty",
+    "risk_score": 46,
+    "reasons": [
+      "Message references Google, but sender is not an official Google domain",
+      "Credential or account-verification request detected"
+    ],
+    "brand": "Google",
+    "official_url": "https://google.com",
+    "attachments": [],
+    "status": "pending",
+    "action_log": [],
+    "created_at": "2026-06-12T08:11:53+00:00",
+    "time_label": "13:41",
+    "dedupe_key": "imap:\"Locos at Locofy.ai\" <no-reply@locofy.ai>:Welcome to Locofy! Let’s get shipping:13"
+  },
+  {
     "id": "mail_20260612130015_716",
     "kind": "email",
     "source": "imap",

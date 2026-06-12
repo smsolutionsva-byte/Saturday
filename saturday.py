@@ -50,9 +50,12 @@ if _env_file.exists():
 WEB_DIR = ROOT / "web"
 ASSET_DIR = ROOT / "asset"
 DATA_DIR = ROOT / "data"
+HACKARENA_DIR = ROOT / "hackarena"
+HACKARENA_BLOCKLIST_FILE = HACKARENA_DIR / "blocklist.json"
 INCIDENTS_FILE = DATA_DIR / "incidents.json"
 BLOCKED_SENDERS_FILE = DATA_DIR / "blocked_senders.json"
 REPORT_DIR = DATA_DIR / "reports"
+WHATSAPP_BRIDGE_LOG = DATA_DIR / "whatsapp_bridge.log"
 DEFAULT_PORT = 8765
 RISK_BLOCK_THRESHOLD = 70
 DEFAULT_WHATSAPP_CHAT = "SATURDAY"
@@ -254,6 +257,79 @@ CREDENTIAL_WORDS = {
 ATTACHMENT_RISK_EXTENSIONS = {".exe", ".scr", ".bat", ".cmd", ".js", ".vbs", ".iso", ".zip", ".rar", ".7z"}
 
 
+def unique_reasons(reasons: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for reason in reasons:
+        if reason and reason not in deduped:
+            deduped.append(reason)
+    return deduped
+
+
+class HackArenaIntel:
+    def __init__(self, blocklist_path: Path = HACKARENA_BLOCKLIST_FILE) -> None:
+        self.blocklist_path = blocklist_path
+
+    def analyze_url(self, url: str) -> dict[str, Any] | None:
+        target = self._parts(url)
+        if not target["host"]:
+            return None
+
+        for fake_url in self._fake_urls():
+            fake = self._parts(fake_url)
+            if self._matches(target, fake, fake_url):
+                return {
+                    "matched": True,
+                    "source": "hackarena:blocklist",
+                    "assigned_agent": "Sentinel Blocklist Guard",
+                    "matched_url": fake_url,
+                    "risk_score": 100,
+                    "threat_severity": "CRITICAL",
+                    "reasons": [
+                        "HackArena blocklist match detected",
+                        "Matches an exact signature in the local malicious threat database",
+                        f"Flagged URL: {fake_url}",
+                    ],
+                    "recommended_action": "Block immediately. This link is confirmed by HackArena threat intel.",
+                }
+        return None
+
+    def _fake_urls(self) -> list[str]:
+        data = read_json(self.blocklist_path, {})
+        urls = data.get("fake_urls", []) if isinstance(data, dict) else []
+        return [str(item).strip() for item in urls if str(item).strip()]
+
+    @staticmethod
+    def _parts(value: str) -> dict[str, str]:
+        raw = (value or "").strip()
+        parsed = urllib.parse.urlparse(raw if "://" in raw else f"https://{raw}")
+        host = (parsed.hostname or "").lower().strip(".")
+        path = (parsed.path or "/").rstrip("/") or "/"
+        query = parsed.query or ""
+        normalized = urllib.parse.urlunparse(
+            (
+                parsed.scheme or "https",
+                host,
+                path,
+                "",
+                query,
+                "",
+            )
+        ).rstrip("/")
+        return {"raw": raw, "host": host, "path": path, "query": query, "normalized": normalized}
+
+    @staticmethod
+    def _matches(target: dict[str, str], fake: dict[str, str], fake_raw: str) -> bool:
+        if not fake["host"]:
+            return fake_raw.lower() in target["raw"].lower()
+        if target["normalized"] == fake["normalized"]:
+            return True
+        if target["host"] != fake["host"]:
+            return False
+        if fake["path"] == "/":
+            return True
+        return target["path"] == fake["path"] or target["path"].startswith(f"{fake['path']}/")
+
+
 @dataclass
 class RiskResult:
     risk_score: int
@@ -261,19 +337,26 @@ class RiskResult:
     brand: str | None = None
     official_url: str | None = None
     domain: str | None = None
+    hackarena: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "risk_score": self.risk_score,
             "reasons": self.reasons,
             "brand": self.brand,
             "official_url": self.official_url,
             "domain": self.domain,
         }
+        if self.hackarena:
+            data["hackarena"] = self.hackarena
+        return data
 
 
 class RiskEngine:
     url_pattern = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+
+    def __init__(self, hackarena: HackArenaIntel | None = None) -> None:
+        self.hackarena = hackarena or HackArenaIntel()
 
     def official_brand_for_domain(self, domain: str) -> dict[str, Any] | None:
         if not domain:
@@ -299,6 +382,7 @@ class RiskEngine:
         reasons: list[str] = []
         brand_hit: str | None = None
         official_url: str | None = None
+        hackarena_result = self.hackarena.analyze_url(url)
 
         if domain in KNOWN_BAD_DOMAINS:
             score += 80
@@ -331,6 +415,15 @@ class RiskEngine:
             display = data["display"]
 
             if domain == official or domain.endswith(f".{official}"):
+                if hackarena_result:
+                    return RiskResult(
+                        hackarena_result["risk_score"],
+                        hackarena_result["reasons"],
+                        display,
+                        f"https://{official}",
+                        domain,
+                        hackarena_result,
+                    )
                 if not reasons:
                     reasons.append("Official domain match")
                 return RiskResult(0, reasons[:1], display, f"https://{official}", domain)
@@ -371,10 +464,14 @@ class RiskEngine:
                 brand_hit = brand_hit or display
                 official_url = official_url or f"https://{official}"
 
+        if hackarena_result:
+            score = max(score, int(hackarena_result.get("risk_score", 100)))
+            reasons = [*hackarena_result.get("reasons", []), *reasons]
+
         if not reasons:
             reasons.append("No strong phishing indicators found")
 
-        return RiskResult(clamp(score), reasons, brand_hit, official_url, domain)
+        return RiskResult(clamp(score), unique_reasons(reasons), brand_hit, official_url, domain, hackarena_result)
 
     def extract_urls(self, text: str) -> list[str]:
         return [match.group(0).rstrip(").,]") for match in self.url_pattern.finditer(text or "")]
@@ -437,19 +534,17 @@ class RiskEngine:
             reasons.append(f"Risky attachment type: {', '.join(risky_attachments[:2])}")
 
         url_results = [self.score_url(url) for url in self.extract_urls(body)]
+        top_url_result: RiskResult | None = None
         if url_results:
-            top_url = max(url_results, key=lambda item: item.risk_score)
-            if top_url.risk_score >= 35:
-                score += min(42, top_url.risk_score)
-                reasons.append(f"Embedded suspicious link: {top_url.domain or 'unknown domain'}")
-                reasons.extend(top_url.reasons[:2])
-                brand_hit = brand_hit or top_url.brand
-                official_url = official_url or top_url.official_url
+            top_url_result = max(url_results, key=lambda item: item.risk_score)
+            if top_url_result.risk_score >= 35:
+                score += min(42, top_url_result.risk_score)
+                reasons.append(f"Embedded suspicious link: {top_url_result.domain or 'unknown domain'}")
+                reasons.extend(top_url_result.reasons[:2])
+                brand_hit = brand_hit or top_url_result.brand
+                official_url = official_url or top_url_result.official_url
 
-        deduped_reasons = []
-        for reason in reasons:
-            if reason not in deduped_reasons:
-                deduped_reasons.append(reason)
+        deduped_reasons = unique_reasons(reasons)
 
         if not deduped_reasons:
             deduped_reasons = ["No high-confidence phishing pattern detected"]
@@ -460,6 +555,7 @@ class RiskEngine:
             "brand": brand_hit,
             "official_url": official_url,
             "sender_domain": sender_domain,
+            "hackarena": top_url_result.hackarena if top_url_result else None,
         }
 
 
@@ -611,6 +707,7 @@ class OnlineSearcher:
 
 class AssistantBrain:
     allowed_intents = {
+        "CHECK_MAIL",
         "SUMMARIZE_INCIDENTS",
         "SHOW_DETAILS",
         "ARCHIVE_EMAIL",
@@ -621,9 +718,10 @@ class AssistantBrain:
         "NO_OP",
     }
 
-    def __init__(self, store: IncidentStore, ai: OpenRouterClient):
+    def __init__(self, store: IncidentStore, ai: OpenRouterClient, mail_scanner: Any | None = None):
         self.store = store
         self.ai = ai
+        self.mail_scanner = mail_scanner
 
     def sanitized_incidents(self, limit: int = 8) -> list[dict[str, Any]]:
         clean = []
@@ -679,6 +777,9 @@ class AssistantBrain:
     def parse_intent(self, text: str) -> dict[str, Any]:
         normalized = text.lower().strip()
 
+        if self._is_mail_check(normalized):
+            return {"intent": "CHECK_MAIL", "target": None, "confidence": 0.95, "message": text}
+
         if self.ai.enabled:
             incidents = self.sanitized_incidents()
             prompt = {
@@ -687,7 +788,8 @@ class AssistantBrain:
                 "incidents": incidents,
                 "rules": [
                     "Return only JSON.",
-                    "If the user is just asking for a summary or checking mail, return SUMMARIZE_INCIDENTS.",
+                    "If the user asks to check, scan, or read mail/inbox/email, return CHECK_MAIL.",
+                    "If the user asks for a summary of existing incidents without asking to scan mail, return SUMMARIZE_INCIDENTS.",
                     "If the user says 'yes', 'sure', 'quarantine', or 'do it', return QUARANTINE_EMAIL and pick the highest-risk pending email.",
                     "Use QUARANTINE_EMAIL instead of destructive delete.",
                     "Only target specific emails if the user asks to act on them.",
@@ -704,7 +806,7 @@ class AssistantBrain:
                 if parsed and parsed.get("intent") in self.allowed_intents:
                     return self._validate_intent(parsed, text)
 
-        if any(phrase in normalized for phrase in ["check my mail", "summarise", "summarize", "what happened", "today", "explain threats", "incident history"]):
+        if any(phrase in normalized for phrase in ["summarise", "summarize", "what happened", "today", "explain threats", "incident history"]):
             return {"intent": "SUMMARIZE_INCIDENTS", "target": None, "confidence": 0.9, "message": text}
         if "detail" in normalized or "show me" in normalized or "highest" in normalized:
             target = self._resolve_target(normalized)
@@ -725,6 +827,9 @@ class AssistantBrain:
     def execute_intent(self, intent: dict[str, Any]) -> dict[str, Any]:
         name = intent.get("intent")
         target = intent.get("target")
+
+        if name == "CHECK_MAIL":
+            return self.check_mail(intent)
 
         if name == "SUMMARIZE_INCIDENTS":
             return {"ok": True, "intent": name, "message": self.explain("summarize incidents")}
@@ -801,8 +906,72 @@ class AssistantBrain:
         return {
             "ok": False,
             "intent": name or "NO_OP",
-            "message": "I can summarize, show details, quarantine, archive, block sender, or create a report.",
+            "message": "I can check mail, summarize, show details, quarantine, archive, block sender, or create a report.",
         }
+
+    def check_mail(self, intent: dict[str, Any]) -> dict[str, Any]:
+        if not self.mail_scanner:
+            return {"ok": False, "intent": "CHECK_MAIL", "message": "IMAP scanning is not connected in this run."}
+
+        try:
+            scan = self.mail_scanner(15)
+        except Exception as exc:
+            return {"ok": False, "intent": "CHECK_MAIL", "message": f"IMAP scan failed: {exc}"}
+
+        if not scan.get("ok"):
+            return {"ok": False, "intent": "CHECK_MAIL", "message": scan.get("message", "IMAP scan failed.")}
+
+        return {
+            "ok": True,
+            "intent": "CHECK_MAIL",
+            "message": self.mail_scan_summary(scan, str(intent.get("message") or "check my mail")),
+            "scan": scan,
+        }
+
+    def mail_scan_summary(self, scan: dict[str, Any], command: str) -> str:
+        payload = {
+            "command": command,
+            "scan_message": scan.get("message"),
+            "scanned_count": scan.get("scanned_count", 0),
+            "messages": scan.get("scanned", [])[:15],
+            "new_or_existing_incidents": scan.get("created", [])[:10],
+        }
+        if self.ai.enabled:
+            ai_response = self.ai.chat(
+                "You are Saturday, a concise digital safety assistant. Summarize ONLY this fresh IMAP scan payload. Do not mention old dashboard/demo incidents unless they appear in this payload. Do not invent messages, senders, subjects, or statuses. If there are risky emails, list the highest-risk items and ask whether to quarantine pending email incidents. If no risky emails were found, say that clearly.",
+                json.dumps(payload, ensure_ascii=False),
+                max_tokens=520,
+            )
+            if ai_response:
+                return ai_response
+
+        scanned = scan.get("scanned", [])
+        if not scanned:
+            return f"{scan.get('message', 'IMAP scan finished.')} I did not receive any message details to summarize."
+
+        risky = sorted(scanned, key=lambda item: int(item.get("risk_score", 0)), reverse=True)
+        high = [item for item in risky if int(item.get("risk_score", 0)) >= 70]
+        lines = [
+            f"I scanned {len(scanned)} real IMAP message{'s' if len(scanned) != 1 else ''}.",
+            f"{len(high)} came back high-risk.",
+            "",
+        ]
+        for item in risky[:5]:
+            reason = (item.get("reasons") or ["No strong phishing indicators found"])[0]
+            lines.append(
+                f"- Risk {item.get('risk_score')}/100: {item.get('subject') or '(no subject)'} from {item.get('sender') or 'unknown sender'} - {reason}"
+            )
+        if scan.get("created"):
+            lines.append("")
+            lines.append(f"I added or refreshed {len(scan['created'])} suspicious email incident{'s' if len(scan['created']) != 1 else ''} in Saturday.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _is_mail_check(normalized: str) -> bool:
+        return bool(
+            re.search(r"\b(check|scan|read|review)\b.*\b(mail|email|emails|inbox|imap)\b", normalized)
+            or re.search(r"\b(mail|email|emails|inbox|imap)\b.*\b(check|scan|read|review)\b", normalized)
+        )
 
     def create_report(self) -> Path:
         incidents = self.store.all()
@@ -950,6 +1119,7 @@ class DemoInbox:
                 "reasons": result["reasons"],
                 "brand": result["brand"],
                 "official_url": result["official_url"],
+                "hackarena": result.get("hackarena"),
                 "attachments": message["attachments"],
                 "created_at": (now - timedelta(minutes=message["minutes_ago"])).isoformat(timespec="seconds"),
                 "time_label": (datetime.now() - timedelta(minutes=message["minutes_ago"])).strftime("%H:%M"),
@@ -1036,9 +1206,15 @@ class WhatsAppNotificationPoller:
         self.chat_key = self.chat_name.casefold()
         self.db_path = db_path
         self.last_order = 0
+        self.seen_ui_items: set[str] = set()
+        self.seen_ui_commands: set[str] = set()
+        self.seen_toasts: set[str] = set()
+        self.last_ui_scan = 0.0
 
     def prime(self) -> None:
         self.last_order = self.latest_order()
+        self._read_live_toasts()
+        self._read_unread_chat_rows()
 
     def latest_order(self) -> int:
         if not self.db_path.exists():
@@ -1069,20 +1245,48 @@ class WhatsAppNotificationPoller:
         events = self._read_since(self.last_order, limit=25)
         for event in events:
             self.last_order = max(self.last_order, event.order)
-        return [event for event in events if self.matches_chat(event)]
+        matched = [event for event in events if self.matches_chat(event)]
+        should_scan_ui = bool(events) or (time.time() - self.last_ui_scan > 8)
+        if should_scan_ui:
+            self.last_ui_scan = time.time()
+            matched.extend(self._read_live_toasts())
+            matched.extend(self._read_unread_chat_rows())
+        return matched
 
     def matches_chat(self, event: WhatsAppNotification) -> bool:
-        title_key = event.title.casefold()
-        return self.chat_key == title_key or self.chat_key in title_key
+        text_keys = [text.casefold() for text in event.texts[:4]]
+        return any(self.chat_key == text or self.chat_key in text for text in text_keys)
 
     def command_from(self, event: WhatsAppNotification) -> str:
-        body = event.body or (event.texts[1] if len(event.texts) > 1 else "")
+        useful_texts = []
+        for value in event.texts:
+            text = html.unescape(value).strip()
+            if not text:
+                continue
+            folded = text.casefold()
+            if folded == self.chat_key:
+                continue
+            if "unread message" in folded:
+                continue
+            if folded in {"whatsapp", "send", "mute notifications"}:
+                continue
+            useful_texts.append(text)
+
+        event_body = html.unescape(event.body or "").strip()
+        if event.title.casefold() != self.chat_key and event_body:
+            body = event_body
+        elif len(useful_texts) >= 2 and ":" not in useful_texts[0] and len(useful_texts[0]) <= 80:
+            body = useful_texts[1]
+        else:
+            body = useful_texts[0] if useful_texts else event_body
         body = html.unescape(body).strip()
         sender_match = re.match(r"^([^:\n]{1,80}):\s+(.+)$", body, flags=re.DOTALL)
         if sender_match and sender_match.group(1).strip().casefold() not in {"http", "https"}:
             body = sender_match.group(2).strip()
         body = re.sub(r"(?i)^\s*@?saturday\b[:,\-\s]*", "", body).strip()
         if re.search(r"(?i)\b\d+\s+unread messages?\b", body):
+            return ""
+        if re.match(r"(?is)^saturday\s*:", body):
             return ""
         return body
 
@@ -1122,6 +1326,16 @@ class WhatsAppNotificationPoller:
         for row in rows:
             texts = self._texts_from_payload(row["Payload"])
             if len(texts) < 2:
+                events.append(
+                    WhatsAppNotification(
+                        order=int(row["Order"]),
+                        arrival_time=int(row["ArrivalTime"] or 0),
+                        title="",
+                        body="",
+                        texts=texts,
+                        tag=str(row["Tag"] or ""),
+                    )
+                )
                 continue
             events.append(
                 WhatsAppNotification(
@@ -1135,12 +1349,232 @@ class WhatsAppNotificationPoller:
             )
         return events
 
+    def _read_unread_chat_rows(self) -> list[WhatsAppNotification]:
+        if not sys.platform.startswith("win"):
+            return []
+
+        chat_literal = self.chat_name.replace("'", "''")
+        script = f"""
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$chat = '{chat_literal}'
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$trueCond = [System.Windows.Automation.Condition]::TrueCondition
+$windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $trueCond)
+foreach ($window in $windows) {{
+  $windowName = [string]$window.Current.Name
+  $windowClass = [string]$window.Current.ClassName
+  if ($windowName -notmatch 'WhatsApp' -and $windowClass -notmatch 'WhatsApp|ApplicationFrame|Chrome_WidgetWin') {{ continue }}
+  $items = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $trueCond)
+  foreach ($item in $items) {{
+    $name = [string]$item.Current.Name
+    if ([string]::IsNullOrWhiteSpace($name)) {{ continue }}
+    if ($name -notmatch '(?i)unread messages?' -or $name -notlike ('*' + $chat + '*')) {{ continue }}
+    [pscustomobject]@{{ name = $name }} | ConvertTo-Json -Compress
+  }}
+}}
+"""
+        try:
+            kwargs: dict[str, Any] = {
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "timeout": 4,
+            }
+            if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                **kwargs,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+
+        events = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+            key = compact(name)
+            if key in self.seen_ui_items:
+                continue
+            self.seen_ui_items.add(key)
+            command = self._command_from_unread_row(name)
+            if not command:
+                continue
+            command_key = compact(f"{self.chat_key}:{command}")
+            if command_key in self.seen_ui_commands:
+                continue
+            self.seen_ui_commands.add(command_key)
+            events.append(
+                WhatsAppNotification(
+                    order=int(time.time() * 1000),
+                    arrival_time=0,
+                    title=self.chat_name,
+                    body=command,
+                    texts=[self.chat_name, command, name],
+                    tag=f"ui:{key[:80]}",
+                )
+            )
+        return events
+
+    def _read_live_toasts(self) -> list[WhatsAppNotification]:
+        if not sys.platform.startswith("win"):
+            return []
+
+        chat_literal = self.chat_name.replace("'", "''")
+        script = f"""
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$chat = '{chat_literal}'
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$trueCond = [System.Windows.Automation.Condition]::TrueCondition
+$windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $trueCond)
+foreach ($window in $windows) {{
+  $windowName = [string]$window.Current.Name
+  $windowClass = [string]$window.Current.ClassName
+  if ($windowClass -match 'Chrome_WidgetWin_1|CabinetWClass' -and $windowName -notmatch 'Notification|Toast') {{ continue }}
+  $items = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $trueCond)
+  $names = New-Object System.Collections.Generic.List[string]
+  foreach ($item in $items) {{
+    $name = [string]$item.Current.Name
+    if ([string]::IsNullOrWhiteSpace($name)) {{ continue }}
+    if ($name.Length -gt 500) {{ $name = $name.Substring(0, 500) }}
+    if (-not $names.Contains($name)) {{ $names.Add($name) }}
+    if ($names.Count -ge 90) {{ break }}
+  }}
+  $joined = [string]::Join(' | ', $names)
+  if ($joined -match '(?i)WhatsApp' -and $joined -like ('*' + $chat + '*')) {{
+    [pscustomobject]@{{ window = $windowName; class = $windowClass; names = $names.ToArray() }} | ConvertTo-Json -Compress
+  }}
+}}
+"""
+        rows = self._run_powershell_json_lines(script, timeout=3.2)
+        events = []
+        for row in rows:
+            names = [str(item).strip() for item in row.get("names", []) if str(item).strip()]
+            command = self._command_from_toast_names(names)
+            if not command:
+                continue
+            key = compact(f"toast:{self.chat_key}:{command}")
+            if key in self.seen_toasts:
+                continue
+            self.seen_toasts.add(key)
+            events.append(
+                WhatsAppNotification(
+                    order=int(time.time() * 1000),
+                    arrival_time=0,
+                    title=self.chat_name,
+                    body=command,
+                    texts=[self.chat_name, command, *names[:8]],
+                    tag=f"toast:{key[:80]}",
+                )
+            )
+        return events
+
+    def _command_from_unread_row(self, value: str) -> str:
+        text = html.unescape(value).replace("\xa0", " ")
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"(?i)^\d+\s+unread messages?\s+", "", text).strip()
+        if not text.casefold().startswith(self.chat_key):
+            return ""
+        text = text[len(self.chat_name) :].strip()
+        text = re.sub(
+            r"(?i)^(?:today|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}:\d{2}\s*(?:am|pm)?)\s+",
+            "",
+            text,
+        ).strip()
+        sender_match = re.match(r"^([^:]{1,90})\s*:\s*(.+)$", text, flags=re.DOTALL)
+        if sender_match:
+            text = sender_match.group(2).strip()
+        text = re.sub(r"(?i)^\s*@?saturday\b[:,\-\s]*", "", text).strip()
+        if not text or re.fullmatch(r"(?i)(?:am|pm|today|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}/\d{1,2}/\d{2,4})", text):
+            return ""
+        if re.match(r"(?is)^saturday\s*:", text):
+            return ""
+        return text
+
+    def _command_from_toast_names(self, names: list[str]) -> str:
+        cleaned = []
+        for value in names:
+            text = html.unescape(value).replace("\xa0", " ")
+            text = re.sub(r"\s+", " ", text).strip()
+            if not text:
+                continue
+            folded = text.casefold()
+            if folded in {"whatsapp", self.chat_key, "type a reply", "send", "close", "more options"}:
+                continue
+            if "mute notifications" in folded or "unread message" in folded:
+                continue
+            cleaned.append(text)
+
+        for text in cleaned:
+            command = self._strip_sender_prefix(text)
+            if command:
+                return command
+        return ""
+
+    def _strip_sender_prefix(self, text: str) -> str:
+        text = re.sub(r"(?i)^\s*@?saturday\b[:,\-\s]*", "", text).strip()
+        sender_match = re.match(r"^([^:\n]{1,90})\s*:\s*(.+)$", text, flags=re.DOTALL)
+        if sender_match and sender_match.group(1).strip().casefold() not in {"http", "https"}:
+            text = sender_match.group(2).strip()
+        if not text or re.fullmatch(r"(?i)(?:am|pm|today|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}/\d{1,2}/\d{2,4})", text):
+            return ""
+        if re.match(r"(?is)^saturday\s*:", text):
+            return ""
+        return text
+
+    def _run_powershell_json_lines(self, script: str, timeout: float) -> list[dict[str, Any]]:
+        try:
+            kwargs: dict[str, Any] = {
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "timeout": timeout,
+            }
+            if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                **kwargs,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+
+        rows = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                rows.append(parsed)
+        return rows
+
     @staticmethod
     def _texts_from_payload(payload: Any) -> list[str]:
         if isinstance(payload, bytes):
             raw = payload.decode("utf-8", errors="ignore")
         else:
             raw = str(payload or "")
+        raw = raw.replace("\x00", "")
         if not raw.strip().startswith("<"):
             return []
         try:
@@ -1163,9 +1597,9 @@ class WhatsAppBridge:
         self,
         brain: AssistantBrain,
         chat_name: str = DEFAULT_WHATSAPP_CHAT,
-        poll_seconds: float = 2.0,
-        announce: bool = True,
-        search_hotkey: str = "ctrl+f",
+        poll_seconds: float = 0.8,
+        announce: bool = False,
+        search_hotkey: str = "ctrl+n",
     ):
         self.brain = brain
         self.chat_name = chat_name.strip() or DEFAULT_WHATSAPP_CHAT
@@ -1184,23 +1618,27 @@ class WhatsAppBridge:
         self.thread.start()
 
     def _run(self) -> None:
-        print(f"WhatsApp bridge: watching notifications for '{self.chat_name}'.")
+        self.log(f"watching notifications for '{self.chat_name}'")
         if self.announce:
-            self.send_message(
-                "Saturday is awake in this WhatsApp demo chat. Try: check my mail, show me the highest risk event, or send me the full report."
-            )
+            try:
+                self.send_message(
+                    "Saturday is awake in this WhatsApp demo chat. Try: check my mail, show me the highest risk event, or send me the full report."
+                )
+            except Exception as exc:
+                self.log(f"startup announce failed; listener is still running: {exc}")
 
         while not self.stop_event.is_set():
             try:
                 for event in self.poller.poll():
                     command = self.poller.command_from(event)
                     if not command:
+                        self.log(f"ignored notification order={event.order} title={event.title!r} texts={event.texts[:3]!r}")
                         continue
-                    print(f"WhatsApp command from {event.title}: {command[:90]}")
+                    self.log(f"command from title={event.title!r} order={event.order}: {command[:140]}")
                     reply = self.answer(command)
                     self.send_message(reply)
             except Exception as exc:
-                print(f"WhatsApp bridge paused after an automation error: {exc}")
+                self.log(f"automation error: {exc}")
             self.stop_event.wait(self.poll_seconds)
 
     def answer(self, message: str) -> str:
@@ -1211,16 +1649,18 @@ class WhatsAppBridge:
 
     def send_message(self, message: str) -> None:
         if not sys.platform.startswith("win"):
-            print("WhatsApp bridge only runs on Windows.")
+            self.log("WhatsApp bridge only runs on Windows")
             return
 
         with self.send_lock:
+            self.log(f"sending {len(message)} chars to '{self.chat_name}'")
             gui = self._gui()
             self.focus_chat(gui)
             self._set_clipboard(message)
             gui.hotkey("ctrl", "v")
             time.sleep(0.16)
             gui.press("enter")
+            self.log("send keystrokes completed")
 
     def focus_chat(self, gui: Any) -> None:
         self.launch_whatsapp()
@@ -1228,12 +1668,12 @@ class WhatsAppBridge:
         gui.press("esc")
         time.sleep(0.15)
         gui.hotkey(*self.search_hotkey)
-        time.sleep(0.25)
+        time.sleep(float(os.getenv("SATURDAY_WHATSAPP_SEARCH_WAIT", "0.45")))
         self._set_clipboard(self.chat_name)
         gui.hotkey("ctrl", "v")
-        time.sleep(0.25)
+        time.sleep(0.35)
         gui.press("enter")
-        time.sleep(0.65)
+        time.sleep(float(os.getenv("SATURDAY_WHATSAPP_CHAT_OPEN_WAIT", "0.9")))
 
     def launch_whatsapp(self) -> None:
         app_id = os.getenv("SATURDAY_WHATSAPP_APP_ID", "").strip() or self._find_whatsapp_app_id()
@@ -1301,7 +1741,18 @@ class WhatsAppBridge:
     @staticmethod
     def _parse_hotkey(value: str) -> tuple[str, ...]:
         parts = tuple(part.strip().lower() for part in value.split("+") if part.strip())
-        return parts or ("ctrl", "f")
+        return parts or ("ctrl", "n")
+
+    def log(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {message}"
+        print(f"WhatsApp bridge: {message}", flush=True)
+        try:
+            WHATSAPP_BRIDGE_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with WHATSAPP_BRIDGE_LOG.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except OSError:
+            pass
 
 
 def scan_imap(store: IncidentStore, risk: RiskEngine, limit: int = 15) -> dict[str, Any]:
@@ -1309,11 +1760,14 @@ def scan_imap(store: IncidentStore, risk: RiskEngine, limit: int = 15) -> dict[s
     user = os.getenv("SATURDAY_IMAP_USER", "").strip()
     password = os.getenv("SATURDAY_IMAP_PASSWORD", "").strip()
     folder = os.getenv("SATURDAY_IMAP_FOLDER", "INBOX").strip()
+    scanned: list[dict[str, Any]] = []
     if not all([host, user, password]):
         return {
             "ok": False,
             "message": "IMAP is not configured. Set SATURDAY_IMAP_HOST, SATURDAY_IMAP_USER, and SATURDAY_IMAP_PASSWORD, or use the demo scan.",
             "created": [],
+            "scanned": scanned,
+            "scanned_count": 0,
         }
 
     created = []
@@ -1340,6 +1794,19 @@ def scan_imap(store: IncidentStore, risk: RiskEngine, limit: int = 15) -> dict[s
                     if part.get_filename()
                 ]
                 result = risk.score_email(sender, subject, body, attachments)
+                scanned_item = {
+                    "sender": sender,
+                    "subject": subject,
+                    "snippet": body[:220],
+                    "risk_score": result["risk_score"],
+                    "reasons": result["reasons"],
+                    "brand": result["brand"],
+                    "official_url": result["official_url"],
+                    "hackarena": result.get("hackarena"),
+                    "attachments": attachments,
+                    "message_id": message_id.decode(errors="ignore"),
+                }
+                scanned.append(scanned_item)
                 if result["risk_score"] < 35:
                     continue
                 incident = {
@@ -1354,16 +1821,32 @@ def scan_imap(store: IncidentStore, risk: RiskEngine, limit: int = 15) -> dict[s
                     "reasons": result["reasons"],
                     "brand": result["brand"],
                     "official_url": result["official_url"],
+                    "hackarena": result.get("hackarena"),
                     "attachments": attachments,
                     "status": "pending",
                     "action_log": [],
                 }
-                created.append(store.add(incident, dedupe_key=f"imap:{sender}:{subject}:{message_id.decode()}"))
+                stored = store.add(incident, dedupe_key=f"imap:{sender}:{subject}:{message_id.decode(errors='ignore')}")
+                scanned_item["incident_id"] = stored.get("id")
+                scanned_item["incident_status"] = stored.get("status")
+                created.append(stored)
         if created:
             send_local_notification("Saturday scanned your inbox", f"{len(created)} suspicious email events were added.")
-        return {"ok": True, "message": f"Scanned IMAP inbox and added {len(created)} suspicious events.", "created": created}
+        return {
+            "ok": True,
+            "message": f"Scanned {len(scanned)} IMAP messages and added {len(created)} suspicious events.",
+            "created": created,
+            "scanned": scanned,
+            "scanned_count": len(scanned),
+        }
     except Exception as exc:
-        return {"ok": False, "message": f"IMAP scan failed: {exc}", "created": created}
+        return {
+            "ok": False,
+            "message": f"IMAP scan failed: {exc}",
+            "created": created,
+            "scanned": scanned,
+            "scanned_count": len(scanned),
+        }
 
 
 def extract_email_body(message: email.message.EmailMessage) -> str:
@@ -1391,8 +1874,11 @@ class SaturdayApp:
         self.risk = RiskEngine()
         self.store = IncidentStore(INCIDENTS_FILE)
         self.ai = OpenRouterClient()
-        self.brain = AssistantBrain(self.store, self.ai)
+        self.brain = AssistantBrain(self.store, self.ai, mail_scanner=self.scan_mail)
         self.demo = DemoInbox(self.store, self.risk)
+
+    def scan_mail(self, limit: int = 15) -> dict[str, Any]:
+        return scan_imap(self.store, self.risk, limit)
 
     def check_url(self, url: str, source: str = "api") -> dict[str, Any]:
         result = self.risk.score_url(url)
@@ -1424,6 +1910,7 @@ class SaturdayApp:
                     "reasons": result.reasons,
                     "brand": result.brand,
                     "official_url": result.official_url,
+                    "hackarena": result.hackarena,
                     "status": "pending",
                     "action_log": [],
                 },
@@ -1493,7 +1980,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/scan-mail":
-            self.send_json(scan_imap(APP.store, APP.risk, int(payload.get("limit", 15) or 15)))
+            self.send_json(APP.scan_mail(int(payload.get("limit", 15) or 15)))
             return
 
         if path == "/api/check-url":
@@ -1611,9 +2098,10 @@ def main() -> None:
     parser.add_argument("--demo", action="store_true", help="Seed the local incident store with demo incidents on launch")
     parser.add_argument("--whatsapp", action="store_true", help="Enable demo WhatsApp Desktop notification bridge")
     parser.add_argument("--whatsapp-chat", default=os.getenv("SATURDAY_WHATSAPP_CHAT", DEFAULT_WHATSAPP_CHAT), help="WhatsApp group/chat name to watch")
-    parser.add_argument("--whatsapp-poll-seconds", type=float, default=float(os.getenv("SATURDAY_WHATSAPP_POLL_SECONDS", "2.0")), help="Seconds between notification checks")
-    parser.add_argument("--whatsapp-search-hotkey", default=os.getenv("SATURDAY_WHATSAPP_SEARCH_HOTKEY", "ctrl+f"), help="WhatsApp chat search shortcut, for example ctrl+f or ctrl+k")
-    parser.add_argument("--whatsapp-no-announce", action="store_true", help="Do not send the startup message to WhatsApp")
+    parser.add_argument("--whatsapp-poll-seconds", type=float, default=float(os.getenv("SATURDAY_WHATSAPP_POLL_SECONDS", "0.8")), help="Seconds between notification checks")
+    parser.add_argument("--whatsapp-search-hotkey", default=os.getenv("SATURDAY_WHATSAPP_SEARCH_HOTKEY", "ctrl+n"), help="WhatsApp chat search/new-chat shortcut, for example ctrl+n or ctrl+k")
+    parser.add_argument("--whatsapp-announce", action="store_true", help="Send a startup message to the WhatsApp chat")
+    parser.add_argument("--whatsapp-no-announce", action="store_true", help="Deprecated; startup WhatsApp messages are off by default")
     args = parser.parse_args()
 
     port = choose_port(args.host, args.port)
@@ -1627,7 +2115,7 @@ def main() -> None:
                 APP.brain,
                 chat_name=args.whatsapp_chat,
                 poll_seconds=args.whatsapp_poll_seconds,
-                announce=not args.whatsapp_no_announce,
+                announce=args.whatsapp_announce and not args.whatsapp_no_announce,
                 search_hotkey=args.whatsapp_search_hotkey,
             )
             whatsapp_bridge.start()

@@ -15,113 +15,184 @@
     </script>
   </head>
   <body class="dashboard-page">
-    <main class="shell">
-      <section class="hero-band">
-        <div class="hero-copy">
-          <p class="eyebrow">local guardian online</p>
-          <h1>Saturday</h1>
-          <p class="subtitle">Proactive digital safety with a runner-mode warning system, local incident memory, and natural language actions.</p>
-          <div class="hero-actions">
-            <button id="scanDemo" class="primary-btn">Scan Demo Inbox</button>
-            <button id="scanImap" class="secondary-btn">Scan IMAP</button>
-            <button id="simulateSite" class="secondary-btn">Test Risky Site</button>
+    <div class="app-frame">
+      <aside class="sidebar">
+        <div class="brand-lockup">
+          <div class="brand-mark">S</div>
+          <div>
+            <strong>SATURDAY</strong>
+            <span>AI Security</span>
           </div>
         </div>
-        <div class="runner-stage" aria-hidden="true">
-          <div class="signal-card">
-            <span>risk radar</span>
-            <strong id="heroRisk">--</strong>
-          </div>
-          <div
-            class="mascot-viewer dashboard-mascot"
-            data-model="/asset/player1.glb"
-            data-animation="run,runlookback,idle"
-            data-model-yaw="-0.35"
-            data-camera-yaw="0.15"
-            data-camera-pitch="0.08"
-            data-target-y="1.75"
-            data-frame-scale="3"
-          >
-            <img class="model-fallback" src="/assets/mascot.svg" alt="">
-          </div>
-          <div class="track-lines">
-            <span></span><span></span><span></span>
-          </div>
+        <div id="navStatus" class="nav-status">
+          <i></i>
+          <span>System watching</span>
         </div>
-      </section>
-
-      <section class="status-grid">
-        <article class="panel command-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">natural language control</p>
-              <h2>Command Saturday</h2>
-            </div>
-            <span id="aiBadge" class="badge">local mode</span>
-          </div>
-          <div id="chatLog" class="chat-log"></div>
-          <form id="commandForm" class="command-form">
-            <input id="commandInput" autocomplete="off" placeholder="check my mail">
-            <button type="submit">Send</button>
-          </form>
-        </article>
-
-        <article class="panel top-risk-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">highest priority</p>
-              <h2>Threat Focus</h2>
-            </div>
-            <span id="incidentCount" class="badge">0 events</span>
-          </div>
-          <div id="topRisk" class="top-risk-empty">No incidents yet. Run the demo scan to wake the system.</div>
-        </article>
-      </section>
-
-      <section class="content-grid">
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">security events</p>
-              <h2>Incident Timeline</h2>
-            </div>
-            <button id="refresh" class="icon-btn" title="Refresh">Refresh</button>
-          </div>
-          <div id="timeline" class="timeline"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">stored locally</p>
-              <h2>Incident Queue</h2>
-            </div>
-            <button id="reportBtn" class="secondary-btn slim">Report</button>
-          </div>
-          <div id="incidentList" class="incident-list"></div>
-        </article>
-      </section>
-    </main>
-
-    <template id="incidentTemplate">
-      <div class="incident-card">
-        <div class="risk-pill"></div>
-        <div class="incident-main">
-          <div class="incident-title-row">
-            <strong class="incident-title"></strong>
-            <span class="incident-status"></span>
-          </div>
-          <p class="incident-target"></p>
-          <ul class="incident-reasons"></ul>
-          <div class="incident-actions">
-            <button data-action="SHOW_DETAILS">Details</button>
-            <button data-action="QUARANTINE_EMAIL">Quarantine</button>
-            <button data-action="ARCHIVE_EMAIL">Archive</button>
-            <button data-action="BLOCK_SENDER">Block Sender</button>
-          </div>
+        <nav class="nav-stack" aria-label="Dashboard sections">
+          <a href="#overview">Dashboard</a>
+          <a href="#timelinePanel">Threat Timeline</a>
+          <a href="#emailPanel">Email Security</a>
+          <a href="#webPanel">Website Protection</a>
+          <a href="#commandPanel">Command</a>
+        </nav>
+        <div class="sidebar-footer">
+          <span id="aiBadge">local mode</span>
+          <span id="incidentCount">0 events</span>
         </div>
-      </div>
-    </template>
+      </aside>
+
+      <main class="main-stage">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">live protection console</p>
+            <h1>Saturday</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="scanDemo" class="ghost-btn">Demo Scan</button>
+            <button id="scanImap" class="primary-btn">Scan IMAP</button>
+            <button id="simulateSite" class="danger-btn">Risky Site</button>
+          </div>
+        </header>
+
+        <section id="overview" class="overview-grid">
+          <article class="hero-card">
+            <div class="hero-copy">
+              <p class="eyebrow">security status</p>
+              <div class="status-word" id="securityLabel">READY</div>
+              <p id="securityMessage" class="status-copy">Saturday is connected to local incidents and waiting for a scan.</p>
+              <div class="stat-grid">
+                <div class="stat-cell">
+                  <span>Threats</span>
+                  <strong id="statThreats">0</strong>
+                </div>
+                <div class="stat-cell">
+                  <span>Blocked</span>
+                  <strong id="statBlocked">0</strong>
+                </div>
+                <div class="stat-cell">
+                  <span>Email</span>
+                  <strong id="statEmails">0</strong>
+                </div>
+                <div class="stat-cell">
+                  <span>Web</span>
+                  <strong id="statWeb">0</strong>
+                </div>
+              </div>
+            </div>
+            <div class="runner-stage" aria-hidden="true">
+              <div class="signal-card">
+                <span>risk</span>
+                <strong id="heroRisk">--</strong>
+              </div>
+              <div
+                class="mascot-viewer dashboard-mascot"
+                data-model="/asset/player1.glb"
+                data-animation="run,runlookback,idle"
+                data-model-yaw="-0.35"
+                data-camera-yaw="0.15"
+                data-camera-pitch="0.08"
+                data-target-y="1.75"
+                data-frame-scale="3"
+              >
+                <img class="model-fallback" src="/assets/mascot.svg" alt="">
+              </div>
+            </div>
+          </article>
+
+          <article class="panel focus-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">highest priority</p>
+                <h2>Threat Focus</h2>
+              </div>
+              <span id="healthStatus" class="badge">checking</span>
+            </div>
+            <div id="topRisk" class="empty-note">No incidents yet.</div>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article id="commandPanel" class="panel command-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">natural language control</p>
+                <h2>Command Saturday</h2>
+              </div>
+              <span id="imapStatus" class="badge">IMAP idle</span>
+            </div>
+            <div id="chatLog" class="chat-log"></div>
+            <form id="commandForm" class="command-form">
+              <input id="commandInput" autocomplete="off" placeholder="check my mail">
+              <button type="submit">Send</button>
+            </form>
+          </article>
+
+          <article class="panel briefing-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">AI briefing</p>
+                <h2>Live Summary</h2>
+              </div>
+              <button id="reportBtn" class="ghost-btn small">Report</button>
+            </div>
+            <pre id="briefingText" class="briefing-text"></pre>
+          </article>
+
+          <article id="timelinePanel" class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">security events</p>
+                <h2>Threat Timeline</h2>
+              </div>
+              <button id="refresh" class="icon-btn" title="Refresh">Refresh</button>
+            </div>
+            <div id="timeline" class="timeline"></div>
+          </article>
+
+          <article class="panel radar-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">threat radar</p>
+                <h2>Risk Mix</h2>
+              </div>
+            </div>
+            <div id="radarBars" class="radar-bars"></div>
+          </article>
+
+          <article id="emailPanel" class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">email security</p>
+                <h2>Suspicious Emails</h2>
+              </div>
+            </div>
+            <div id="emailList" class="incident-list"></div>
+          </article>
+
+          <article id="webPanel" class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">website protection</p>
+                <h2>Analyzed Routes</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>URL</th>
+                    <th>Risk</th>
+                    <th>Source</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="websiteTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
 
     <script type="module" src="/mascot-viewer.js"></script>
     <script src="/app.js"></script>

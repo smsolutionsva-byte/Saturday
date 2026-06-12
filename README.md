@@ -35,7 +35,10 @@ send me the full report
 4. Enable Developer Mode.
 5. Choose Load unpacked.
 6. Select `C:\Users\Red\Downloads\SATURDAY\extension`.
-7. Visit `https://g00gle-login.xyz/accounts/verify` to see the warning flow.
+7. Pin/open the Saturday extension popup and confirm it says `Online`.
+8. Visit `https://g00gle-login.xyz/accounts/verify` to see the warning flow.
+
+After changing extension files, return to `chrome://extensions` and click Reload on Saturday Browser Guard. The extension auto-finds Saturday on local ports `8765-8784`, so it still works if the app starts on a nearby port.
 
 The extension asks the local Python server to score every top-level navigation. If risk is 70 or higher, it redirects the tab to Saturday's warning screen.
 
@@ -67,6 +70,8 @@ python .\saturday.py
 
 For demo safety, Saturday does not permanently delete real email. The "delete" action is implemented as local quarantine in the incident store.
 
+Once IMAP is configured, typing `check my mail` in the dashboard or WhatsApp bridge scans the live inbox first, then summarizes that fresh scan.
+
 ## Optional WhatsApp Demo Bridge
 
 Saturday can mirror the dashboard command console into a WhatsApp Desktop group for hackathon demos.
@@ -80,16 +85,16 @@ Saturday can mirror the dashboard command console into a WhatsApp Desktop group 
 python .\saturday.py --demo --whatsapp --whatsapp-chat "SATURDAY"
 ```
 
-When someone messages the `SATURDAY` group, Saturday reads the Windows notification, opens WhatsApp Desktop, focuses that group, and replies with the same local command brain used by the website chat.
+When someone messages the `SATURDAY` group, Saturday watches Windows notifications and WhatsApp's unread chat row, opens WhatsApp Desktop, focuses that group, and replies with the same local command brain used by the website chat.
 
 Useful tweaks:
 
 ```powershell
-python .\saturday.py --demo --whatsapp --whatsapp-chat "SATURDAY" --whatsapp-no-announce
+python .\saturday.py --demo --whatsapp --whatsapp-chat "SATURDAY" --whatsapp-announce
 $env:SATURDAY_WHATSAPP_SEARCH_HOTKEY="ctrl+k"
 ```
 
-If WhatsApp changes its search shortcut on the demo laptop, set `SATURDAY_WHATSAPP_SEARCH_HOTKEY` to the shortcut that focuses chat search.
+Saturday uses `Ctrl+N` by default to open WhatsApp's new-chat/search flow, then selects the `SATURDAY` group and sends the reply. If WhatsApp uses a different shortcut on the demo laptop, set `SATURDAY_WHATSAPP_SEARCH_HOTKEY`. Bridge activity is written to `data/whatsapp_bridge.log`.
 
 ## Demo Notes
 

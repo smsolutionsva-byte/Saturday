@@ -1,6 +1,7 @@
-const API_BASE = "http://127.0.0.1:8765";
+const API_CANDIDATES = Array.from({length: 20}, (_, index) => `http://127.0.0.1:${8765 + index}`);
 const BLOCK_THRESHOLD = 70;
 const recentChecks = new Map();
+let activeApiBase = null;
 
 function skipUrl(url) {
   return (
@@ -10,9 +11,7 @@ function skipUrl(url) {
     url.startsWith("edge://") ||
     url.startsWith("about:") ||
     url.startsWith("file://") ||
-    url.startsWith(`${API_BASE}/`) ||
-    url.includes("127.0.0.1:8765") ||
-    url.includes("localhost:8765")
+    /^https?:\/\/(?:127\.0\.0\.1|localhost):87[6-8]\d\//.test(url)
   );
 }
 
@@ -28,12 +27,50 @@ function recentlyChecked(url) {
 }
 
 async function checkUrl(url) {
-  const response = await fetch(`${API_BASE}/api/check-url`, {
+  const apiBase = await resolveApiBase();
+  if (!apiBase) throw new Error("Saturday local engine is not reachable");
+  const response = await fetch(`${apiBase}/api/check-url`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({url, source: "extension"})
   });
-  return response.json();
+  const data = await response.json();
+  return {...data, apiBase};
+}
+
+async function resolveApiBase() {
+  if (activeApiBase && await isHealthy(activeApiBase)) return activeApiBase;
+
+  const stored = await chrome.storage.local.get("apiBase");
+  if (stored.apiBase && await isHealthy(stored.apiBase)) {
+    activeApiBase = stored.apiBase;
+    return activeApiBase;
+  }
+
+  for (const candidate of API_CANDIDATES) {
+    if (await isHealthy(candidate)) {
+      activeApiBase = candidate;
+      await chrome.storage.local.set({apiBase: candidate});
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function isHealthy(apiBase) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 650);
+    const response = await fetch(`${apiBase}/api/health`, {signal: controller.signal});
+    clearTimeout(timer);
+    if (!response.ok) return false;
+    const data = await response.json();
+    if (!data.ok || data.app !== "Saturday") return false;
+    const mascotResponse = await fetch(`${apiBase}/mascot-viewer.js`, {cache: "no-store"});
+    return mascotResponse.ok;
+  } catch (error) {
+    return false;
+  }
 }
 
 chrome.webNavigation.onBeforeNavigate.addListener(async details => {
@@ -45,7 +82,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async details => {
     const result = await checkUrl(url);
     if (result.allow_navigation) return;
     if (result.risk_score >= BLOCK_THRESHOLD) {
-      const warningUrl = `${API_BASE}/warning?url=${encodeURIComponent(url)}&from=extension`;
+      const warningUrl = `${result.apiBase}/warning?url=${encodeURIComponent(url)}&from=extension`;
       await chrome.tabs.update(details.tabId, {url: warningUrl});
     }
   } catch (error) {
