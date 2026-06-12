@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Saturday Warning</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="warning-page">
+    <main class="warning-shell">
+      <section class="warning-track" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </section>
+      <section class="warning-board">
+        <div class="warning-mascot-wrap">
+          <img class="warning-mascot" src="/assets/mascot.svg" alt="">
+        </div>
+        <div class="warning-copy">
+          <p class="eyebrow danger">runner-mode intercept</p>
+          <h1>Suspicious Website Detected</h1>
+          <p id="warningSummary" class="warning-summary">Saturday is checking this route before you continue.</p>
+          <div class="url-box">
+            <span>Detected URL</span>
+            <strong id="detectedUrl">--</strong>
+          </div>
+          <div class="risk-meter">
+            <div>
+              <span>Risk Score</span>
+              <strong id="riskScore">--</strong>
+            </div>
+            <div class="meter"><i id="riskBar"></i></div>
+          </div>
+          <div id="officialBox" class="official-box hidden">
+            <span>Official route</span>
+            <strong id="officialUrl"></strong>
+          </div>
+          <ul id="warningReasons" class="warning-reasons"></ul>
+          <div class="warning-actions">
+            <button id="leaveSite" class="primary-btn">Leave Site</button>
+            <button id="continueSite" class="danger-btn">Continue Anyway</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const targetUrl = params.get("url") || "https://g00gle-login.xyz/accounts/verify";
+      const detectedUrl = document.getElementById("detectedUrl");
+      const riskScore = document.getElementById("riskScore");
+      const riskBar = document.getElementById("riskBar");
+      const warningSummary = document.getElementById("warningSummary");
+      const officialBox = document.getElementById("officialBox");
+      const officialUrl = document.getElementById("officialUrl");
+      const reasons = document.getElementById("warningReasons");
+      detectedUrl.textContent = targetUrl;
+
+      async function loadRisk() {
+        const response = await fetch("/api/check-url", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({url: targetUrl, source: "dashboard"})
+        });
+        const data = await response.json();
+        riskScore.textContent = `${data.risk_score}/100`;
+        riskBar.style.width = `${Math.max(8, data.risk_score)}%`;
+        warningSummary.textContent = data.brand
+          ? `This website appears to impersonate ${data.brand}.`
+          : "This website has enough suspicious signals that Saturday paused navigation.";
+        if (data.official_url) {
+          officialBox.classList.remove("hidden");
+          officialUrl.textContent = data.official_url;
+        }
+        reasons.innerHTML = "";
+        for (const reason of data.reasons || []) {
+          const item = document.createElement("li");
+          item.textContent = reason;
+          reasons.appendChild(item);
+        }
+      }
+
+      document.getElementById("leaveSite").addEventListener("click", () => {
+        location.href = "/";
+      });
+
+      document.getElementById("continueSite").addEventListener("click", async () => {
+        await fetch("/api/allow-once", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({url: targetUrl})
+        });
+        location.href = targetUrl;
+      });
+
+      loadRisk().catch(() => {
+        warningSummary.textContent = "Saturday could not reach the local risk engine, so it recommends leaving this site.";
+      });
+    </script>
+  </body>
+</html>

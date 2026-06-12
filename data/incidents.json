@@ -1,0 +1,130 @@
+[
+  {
+    "id": "web_20260612112424_849",
+    "kind": "web",
+    "source": "dashboard",
+    "title": "Suspicious website blocked",
+    "url": "https://g00gle-login.xyz/accounts/verify",
+    "target": "g00gle-login.xyz",
+    "risk_score": 100,
+    "reasons": [
+      "Domain appears in Saturday's local high-risk demo feed",
+      "Unusual or abuse-prone top-level domain: .xyz",
+      "Domain uses number substitutions often seen in impersonation",
+      "Domain uses hyphenated brand-style wording",
+      "URL path contains login or account-verification language"
+    ],
+    "brand": null,
+    "official_url": null,
+    "status": "pending",
+    "action_log": [],
+    "created_at": "2026-06-12T11:24:24+05:30",
+    "time_label": "11:24",
+    "dedupe_key": "web:g00gle-login.xyz:2026-06-12"
+  },
+  {
+    "id": "mail_20260612112407_813",
+    "kind": "email",
+    "source": "demo",
+    "title": "Google impersonation attempt",
+    "sender": "Google Security <support@g00gle-login.xyz>",
+    "subject": "Urgent: unusual activity, verify your account within 24 hours",
+    "snippet": "We detected unusual activity. Sign in now at https://g00gle-login.xyz/accounts/verify to prevent suspension.",
+    "risk_score": 100,
+    "reasons": [
+      "Domain appears in Saturday's local high-risk demo feed",
+      "Unusual or abuse-prone top-level domain: .xyz",
+      "Message references Google, but sender is not an official Google domain",
+      "Urgent pressure language detected",
+      "Credential or account-verification request detected",
+      "Embedded suspicious link: g00gle-login.xyz"
+    ],
+    "brand": "Google",
+    "official_url": "https://google.com",
+    "attachments": [],
+    "created_at": "2026-06-12T11:06:07+05:30",
+    "time_label": "11:06",
+    "status": "quarantined",
+    "action_log": [
+      {
+        "at": "2026-06-12T11:25:22+05:30",
+        "action": "Quarantined locally; destructive IMAP deletion is disabled for demo safety"
+      }
+    ],
+    "dedupe_key": "demo:Google Security <support@g00gle-login.xyz>:Urgent: unusual activity, verify your account within 24 hours"
+  },
+  {
+    "id": "mail_20260612112407_328",
+    "kind": "email",
+    "source": "demo",
+    "title": "Suspicious invoice attachment",
+    "sender": "Billing Team <invoice@invoice-review.zip>",
+    "subject": "Final invoice attached - payment due today",
+    "snippet": "Please review the attached invoice and complete payment immediately.",
+    "risk_score": 91,
+    "reasons": [
+      "Domain appears in Saturday's local high-risk demo feed",
+      "Unusual or abuse-prone top-level domain: .zip",
+      "Urgent pressure language detected",
+      "Payment or invoice language detected",
+      "Risky attachment type: June_Invoice.iso"
+    ],
+    "brand": null,
+    "official_url": null,
+    "attachments": [
+      "June_Invoice.iso"
+    ],
+    "created_at": "2026-06-12T10:41:07+05:30",
+    "time_label": "10:41",
+    "status": "pending",
+    "action_log": [],
+    "dedupe_key": "demo:Billing Team <invoice@invoice-review.zip>:Final invoice attached - payment due today"
+  },
+  {
+    "id": "mail_20260612112407_113",
+    "kind": "email",
+    "source": "demo",
+    "title": "Microsoft impersonation attempt",
+    "sender": "Microsoft Account <help@micros0ft-security.live>",
+    "subject": "Password reset required",
+    "snippet": "Your Microsoft account has been locked. Re-enter your password here: https://micros0ft-security.live/session",
+    "risk_score": 100,
+    "reasons": [
+      "Domain appears in Saturday's local high-risk demo feed",
+      "Unusual or abuse-prone top-level domain: .live",
+      "Message references Microsoft, but sender is not an official Microsoft domain",
+      "Urgent pressure language detected",
+      "Credential or account-verification request detected",
+      "Embedded suspicious link: micros0ft-security.live"
+    ],
+    "brand": "Microsoft",
+    "official_url": "https://microsoft.com",
+    "attachments": [],
+    "created_at": "2026-06-12T10:08:07+05:30",
+    "time_label": "10:08",
+    "status": "pending",
+    "action_log": [],
+    "dedupe_key": "demo:Microsoft Account <help@micros0ft-security.live>:Password reset required"
+  },
+  {
+    "id": "mail_20260612112407_257",
+    "kind": "email",
+    "source": "demo",
+    "title": "Low-risk email scanned",
+    "sender": "Campus Events <events@hackathon.local>",
+    "subject": "Sponsor booth schedule",
+    "snippet": "Reminder: sponsor demos start after lunch. No action needed.",
+    "risk_score": 0,
+    "reasons": [
+      "No high-confidence phishing pattern detected"
+    ],
+    "brand": null,
+    "official_url": null,
+    "attachments": [],
+    "created_at": "2026-06-12T09:39:07+05:30",
+    "time_label": "09:39",
+    "status": "pending",
+    "action_log": [],
+    "dedupe_key": "demo:Campus Events <events@hackathon.local>:Sponsor booth schedule"
+  }
+]

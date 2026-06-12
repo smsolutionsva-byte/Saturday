@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Saturday - Digital Safety Assistant</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="dashboard-page">
+    <main class="shell">
+      <section class="hero-band">
+        <div class="hero-copy">
+          <p class="eyebrow">local guardian online</p>
+          <h1>Saturday</h1>
+          <p class="subtitle">Proactive digital safety with a runner-mode warning system, local incident memory, and natural language actions.</p>
+          <div class="hero-actions">
+            <button id="scanDemo" class="primary-btn">Scan Demo Inbox</button>
+            <button id="scanImap" class="secondary-btn">Scan IMAP</button>
+            <button id="simulateSite" class="secondary-btn">Test Risky Site</button>
+          </div>
+        </div>
+        <div class="runner-stage" aria-hidden="true">
+          <div class="signal-card">
+            <span>risk radar</span>
+            <strong id="heroRisk">--</strong>
+          </div>
+          <img class="mascot" src="/assets/mascot.svg" alt="">
+          <div class="track-lines">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="status-grid">
+        <article class="panel command-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">natural language control</p>
+              <h2>Command Saturday</h2>
+            </div>
+            <span id="aiBadge" class="badge">local mode</span>
+          </div>
+          <div id="chatLog" class="chat-log"></div>
+          <form id="commandForm" class="command-form">
+            <input id="commandInput" autocomplete="off" placeholder="check my mail">
+            <button type="submit">Send</button>
+          </form>
+        </article>
+
+        <article class="panel top-risk-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">highest priority</p>
+              <h2>Threat Focus</h2>
+            </div>
+            <span id="incidentCount" class="badge">0 events</span>
+          </div>
+          <div id="topRisk" class="top-risk-empty">No incidents yet. Run the demo scan to wake the system.</div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">security events</p>
+              <h2>Incident Timeline</h2>
+            </div>
+            <button id="refresh" class="icon-btn" title="Refresh">Refresh</button>
+          </div>
+          <div id="timeline" class="timeline"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">stored locally</p>
+              <h2>Incident Queue</h2>
+            </div>
+            <button id="reportBtn" class="secondary-btn slim">Report</button>
+          </div>
+          <div id="incidentList" class="incident-list"></div>
+        </article>
+      </section>
+    </main>
+
+    <template id="incidentTemplate">
+      <div class="incident-card">
+        <div class="risk-pill"></div>
+        <div class="incident-main">
+          <div class="incident-title-row">
+            <strong class="incident-title"></strong>
+            <span class="incident-status"></span>
+          </div>
+          <p class="incident-target"></p>
+          <ul class="incident-reasons"></ul>
+          <div class="incident-actions">
+            <button data-action="SHOW_DETAILS">Details</button>
+            <button data-action="QUARANTINE_EMAIL">Quarantine</button>
+            <button data-action="ARCHIVE_EMAIL">Archive</button>
+            <button data-action="BLOCK_SENDER">Block Sender</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
