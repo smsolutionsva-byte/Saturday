@@ -27,7 +27,24 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
+
+# Load .env file manually if it exists
+_env_file = ROOT / ".env"
+if _env_file.exists():
+    try:
+        with _env_file.open("r", encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line or _line.startswith("#"):
+                    continue
+                if "=" in _line:
+                    _key, _val = _line.split("=", 1)
+                    os.environ.setdefault(_key.strip(), _val.strip().strip("'\""))
+    except OSError:
+        pass
+
 WEB_DIR = ROOT / "web"
+ASSET_DIR = ROOT / "asset"
 DATA_DIR = ROOT / "data"
 INCIDENTS_FILE = DATA_DIR / "incidents.json"
 BLOCKED_SENDERS_FILE = DATA_DIR / "blocked_senders.json"
@@ -1101,7 +1118,10 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/assets/"):
             self.serve_file(WEB_DIR / path.lstrip("/"))
             return
-        if path in {"/styles.css", "/app.js"}:
+        if path.startswith("/asset/"):
+            self.serve_file(ASSET_DIR / path.removeprefix("/asset/"), root=ASSET_DIR)
+            return
+        if path in {"/styles.css", "/app.js", "/mascot-viewer.js"}:
             self.serve_file(WEB_DIR / path.lstrip("/"))
             return
         self.send_error(404, "Not found")
@@ -1191,10 +1211,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Cache-Control", "no-store")
 
-    def serve_file(self, path: Path) -> None:
+    def serve_file(self, path: Path, root: Path = WEB_DIR) -> None:
         try:
             resolved = path.resolve()
-            if WEB_DIR.resolve() not in resolved.parents and resolved != WEB_DIR.resolve():
+            safe_root = root.resolve()
+            if safe_root not in resolved.parents and resolved != safe_root:
                 self.send_error(403, "Forbidden")
                 return
             if not resolved.exists() or not resolved.is_file():
@@ -1204,6 +1225,8 @@ class Handler(BaseHTTPRequestHandler):
             content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
             if resolved.suffix == ".svg":
                 content_type = "image/svg+xml"
+            elif resolved.suffix == ".glb":
+                content_type = "model/gltf-binary"
             self.send_response(200)
             self.send_common_headers(content_type)
             self.send_header("Content-Length", str(len(raw)))

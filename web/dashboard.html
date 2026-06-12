@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Saturday - Digital Safety Assistant</title>
     <link rel="stylesheet" href="/styles.css">
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
   </head>
   <body class="dashboard-page">
     <main class="shell">
@@ -24,7 +32,18 @@
             <span>risk radar</span>
             <strong id="heroRisk">--</strong>
           </div>
-          <img class="mascot" src="/assets/mascot.svg" alt="">
+          <div
+            class="mascot-viewer dashboard-mascot"
+            data-model="/asset/player1.glb"
+            data-animation="run,runlookback,idle"
+            data-model-yaw="-0.35"
+            data-camera-yaw="0.15"
+            data-camera-pitch="0.08"
+            data-target-y="1.75"
+            data-frame-scale="3"
+          >
+            <img class="model-fallback" src="/assets/mascot.svg" alt="">
+          </div>
           <div class="track-lines">
             <span></span><span></span><span></span>
           </div>
@@ -104,6 +123,7 @@
       </div>
     </template>
 
+    <script type="module" src="/mascot-viewer.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

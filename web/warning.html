@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Saturday Warning</title>
     <link rel="stylesheet" href="/styles.css">
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
   </head>
   <body class="warning-page">
     <main class="warning-shell">
@@ -13,7 +21,18 @@
       </section>
       <section class="warning-board">
         <div class="warning-mascot-wrap">
-          <img class="warning-mascot" src="/assets/mascot.svg" alt="">
+          <div
+            class="mascot-viewer warning-mascot"
+            data-model="/asset/player1.glb"
+            data-animation="runlookback,run,idle"
+            data-model-yaw="-0.2"
+            data-camera-yaw="0.22"
+            data-camera-pitch="0.04"
+            data-target-y="1.85"
+            data-frame-scale="3.6"
+          >
+            <img class="model-fallback" src="/assets/mascot.svg" alt="">
+          </div>
         </div>
         <div class="warning-copy">
           <p class="eyebrow danger">runner-mode intercept</p>
@@ -42,6 +61,7 @@
         </div>
       </section>
     </main>
+    <script type="module" src="/mascot-viewer.js"></script>
     <script>
       const params = new URLSearchParams(location.search);
       const targetUrl = params.get("url") || "https://g00gle-login.xyz/accounts/verify";
