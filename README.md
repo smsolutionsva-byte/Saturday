@@ -67,10 +67,33 @@ python .\saturday.py
 
 For demo safety, Saturday does not permanently delete real email. The "delete" action is implemented as local quarantine in the incident store.
 
+## Optional WhatsApp Demo Bridge
+
+Saturday can mirror the dashboard command console into a WhatsApp Desktop group for hackathon demos.
+
+1. Install/sign in to WhatsApp Desktop from the Microsoft Store.
+2. Create or open a group named `SATURDAY`.
+3. Keep WhatsApp notifications enabled for that group in Windows and WhatsApp.
+4. Start Saturday:
+
+```powershell
+python .\saturday.py --demo --whatsapp --whatsapp-chat "SATURDAY"
+```
+
+When someone messages the `SATURDAY` group, Saturday reads the Windows notification, opens WhatsApp Desktop, focuses that group, and replies with the same local command brain used by the website chat.
+
+Useful tweaks:
+
+```powershell
+python .\saturday.py --demo --whatsapp --whatsapp-chat "SATURDAY" --whatsapp-no-announce
+$env:SATURDAY_WHATSAPP_SEARCH_HOTKEY="ctrl+k"
+```
+
+If WhatsApp changes its search shortcut on the demo laptop, set `SATURDAY_WHATSAPP_SEARCH_HOTKEY` to the shortcut that focuses chat search.
+
 ## Demo Notes
 
-- WhatsApp automation is intentionally not the primary command path because Desktop UI automation is fragile during live judging.
-- The dashboard command console is the reliable MVP path.
+- WhatsApp automation is available as an optional wow-factor bridge, but the dashboard command console remains the reliable MVP path if desktop UI focus changes during judging.
 - The browser warning uses original runner-themed art and visual language instead of official Subway Surfers assets.
 - Incidents are stored in `data/incidents.json`.
 - Reports are generated in `data/reports`.

@@ -10,9 +10,12 @@ import mimetypes
 import os
 import random
 import re
+import shutil
+import sqlite3
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -24,6 +27,7 @@ from difflib import SequenceMatcher
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parent
@@ -51,6 +55,8 @@ BLOCKED_SENDERS_FILE = DATA_DIR / "blocked_senders.json"
 REPORT_DIR = DATA_DIR / "reports"
 DEFAULT_PORT = 8765
 RISK_BLOCK_THRESHOLD = 70
+DEFAULT_WHATSAPP_CHAT = "SATURDAY"
+WHATSAPP_NOTIFICATION_DB = Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" / "Windows" / "Notifications" / "wpndatabase.db"
 
 
 def utc_now() -> str:
@@ -572,6 +578,37 @@ class OpenRouterClient:
             return None
 
 
+class OnlineSearcher:
+    @staticmethod
+    def search_duckduckgo(query: str) -> str:
+        url = "https://lite.duckduckgo.com/lite/"
+        data = urllib.parse.urlencode({"q": query}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html_data = response.read().decode("utf-8")
+                import re
+                text = re.sub(r'<[^>]+>', ' ', html_data)
+                text = re.sub(r'\s+', ' ', text)
+                return text[:2000]
+        except Exception:
+            return "Search failed."
+
+    @staticmethod
+    def fetch_weather(location: str = "Bengaluru") -> str:
+        url = f"https://wttr.in/{urllib.parse.quote(location)}?format=3"
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/7.64.1"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                return response.read().decode("utf-8").strip()
+        except Exception:
+            return "Weather fetch failed."
+
+
 class AssistantBrain:
     allowed_intents = {
         "SUMMARIZE_INCIDENTS",
@@ -580,6 +617,7 @@ class AssistantBrain:
         "QUARANTINE_EMAIL",
         "BLOCK_SENDER",
         "FULL_REPORT",
+        "GENERAL_QUERY",
         "NO_OP",
     }
 
@@ -630,7 +668,7 @@ class AssistantBrain:
         incidents = self.sanitized_incidents()
         if self.ai.enabled and incidents:
             ai_response = self.ai.chat(
-                "You are Saturday, a concise local digital safety assistant. Explain risk in plain language. Do not invent incidents. Keep the tone confident and helpful.",
+                "You are Saturday, a concise local digital safety assistant. Explain risk in plain language. At the end of your summary, if there are high-risk pending emails, ask the user if they would like you to quarantine or delete them. Do not invent incidents. Keep the tone confident and helpful.",
                 json.dumps({"command": command or "summarize", "incidents": incidents}, ensure_ascii=False),
                 max_tokens=420,
             )
@@ -649,8 +687,11 @@ class AssistantBrain:
                 "incidents": incidents,
                 "rules": [
                     "Return only JSON.",
+                    "If the user is just asking for a summary or checking mail, return SUMMARIZE_INCIDENTS.",
+                    "If the user says 'yes', 'sure', 'quarantine', or 'do it', return QUARANTINE_EMAIL and pick the highest-risk pending email.",
                     "Use QUARANTINE_EMAIL instead of destructive delete.",
-                    "If target is vague, pick the highest-risk pending email.",
+                    "Only target specific emails if the user asks to act on them.",
+                    "If the user asks a general question, wants fact checking, or asks for the weather, return GENERAL_QUERY.",
                 ],
             }
             response = self.ai.chat(
@@ -661,25 +702,25 @@ class AssistantBrain:
             if response:
                 parsed = self._extract_json(response)
                 if parsed and parsed.get("intent") in self.allowed_intents:
-                    return self._validate_intent(parsed)
+                    return self._validate_intent(parsed, text)
 
         if any(phrase in normalized for phrase in ["check my mail", "summarise", "summarize", "what happened", "today", "explain threats", "incident history"]):
-            return {"intent": "SUMMARIZE_INCIDENTS", "target": None, "confidence": 0.9}
+            return {"intent": "SUMMARIZE_INCIDENTS", "target": None, "confidence": 0.9, "message": text}
         if "detail" in normalized or "show me" in normalized or "highest" in normalized:
             target = self._resolve_target(normalized)
-            return {"intent": "SHOW_DETAILS", "target": target, "confidence": 0.82}
+            return {"intent": "SHOW_DETAILS", "target": target, "confidence": 0.82, "message": text}
         if "delete" in normalized or "remove" in normalized or "quarantine" in normalized:
             target = self._resolve_target(normalized, kind="email")
-            return {"intent": "QUARANTINE_EMAIL", "target": target, "confidence": 0.8}
+            return {"intent": "QUARANTINE_EMAIL", "target": target, "confidence": 0.8, "message": text}
         if "archive" in normalized:
             target = self._resolve_target(normalized, kind="email")
-            return {"intent": "ARCHIVE_EMAIL", "target": target, "confidence": 0.78}
+            return {"intent": "ARCHIVE_EMAIL", "target": target, "confidence": 0.78, "message": text}
         if "block" in normalized and ("sender" in normalized or "email" in normalized):
             target = self._resolve_target(normalized, kind="email")
-            return {"intent": "BLOCK_SENDER", "target": target, "confidence": 0.78}
+            return {"intent": "BLOCK_SENDER", "target": target, "confidence": 0.78, "message": text}
         if "report" in normalized or "full report" in normalized:
-            return {"intent": "FULL_REPORT", "target": None, "confidence": 0.86}
-        return {"intent": "NO_OP", "target": None, "confidence": 0.4}
+            return {"intent": "FULL_REPORT", "target": None, "confidence": 0.86, "message": text}
+        return {"intent": "NO_OP", "target": None, "confidence": 0.4, "message": text}
 
     def execute_intent(self, intent: dict[str, Any]) -> dict[str, Any]:
         name = intent.get("intent")
@@ -687,6 +728,31 @@ class AssistantBrain:
 
         if name == "SUMMARIZE_INCIDENTS":
             return {"ok": True, "intent": name, "message": self.explain("summarize incidents")}
+
+        if name == "GENERAL_QUERY":
+            if not self.ai.enabled:
+                return {"ok": False, "intent": name, "message": "I need an OpenRouter key to answer general questions."}
+            
+            location = "Bengaluru"
+            lower_msg = intent.get("message", "").lower()
+            if "weather" in lower_msg or "hot" in lower_msg or "rain" in lower_msg or "temperature" in lower_msg:
+                extract_prompt = "Extract the city name from the user's message. If none is found, just say 'Bengaluru'. Reply with ONLY the city name."
+                extracted = self.ai.chat(extract_prompt, intent.get("message", ""), max_tokens=10)
+                if extracted and len(extracted) < 30:
+                    location = extracted.strip()
+                search_context = f"Weather context for {location}:\n{OnlineSearcher.fetch_weather(location)}"
+            else:
+                search_context = f"Web Search Context:\n{OnlineSearcher.search_duckduckgo(intent.get('message', ''))}"
+            
+            prompt = (
+                "You are Saturday, a digital assistant. Answer the user's question directly based on the provided context. "
+                "Do not invent information. If the context does not contain the answer, say you don't know.\n\n"
+                f"Context:\n{search_context}"
+            )
+            ai_response = self.ai.chat(prompt, intent.get("message", ""), max_tokens=600)
+            if ai_response:
+                return {"ok": True, "intent": name, "message": ai_response}
+            return {"ok": False, "intent": name, "message": "I could not fetch an answer."}
 
         if name == "FULL_REPORT":
             path = self.create_report()
@@ -796,7 +862,7 @@ class AssistantBrain:
         highest = self.store.highest_risk(kind=kind)
         return highest.get("id") if highest else None
 
-    def _validate_intent(self, parsed: dict[str, Any]) -> dict[str, Any]:
+    def _validate_intent(self, parsed: dict[str, Any], original_text: str = "") -> dict[str, Any]:
         intent = parsed.get("intent")
         target = parsed.get("target")
         if intent in {"ARCHIVE_EMAIL", "QUARANTINE_EMAIL", "BLOCK_SENDER", "SHOW_DETAILS"}:
@@ -807,6 +873,7 @@ class AssistantBrain:
             "target": target,
             "confidence": float(parsed.get("confidence", 0.5) or 0.5),
             "explanation": parsed.get("explanation"),
+            "message": original_text,
         }
 
     @staticmethod
@@ -951,6 +1018,290 @@ try {{
         subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], **kwargs)
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+
+@dataclass
+class WhatsAppNotification:
+    order: int
+    arrival_time: int
+    title: str
+    body: str
+    texts: list[str]
+    tag: str
+
+
+class WhatsAppNotificationPoller:
+    def __init__(self, chat_name: str, db_path: Path = WHATSAPP_NOTIFICATION_DB):
+        self.chat_name = chat_name.strip() or DEFAULT_WHATSAPP_CHAT
+        self.chat_key = self.chat_name.casefold()
+        self.db_path = db_path
+        self.last_order = 0
+
+    def prime(self) -> None:
+        self.last_order = self.latest_order()
+
+    def latest_order(self) -> int:
+        if not self.db_path.exists():
+            return 0
+
+        snapshot = Path(tempfile.gettempdir()) / f"saturday_wpndatabase_prime_{os.getpid()}_{time.time_ns()}.db"
+        try:
+            shutil.copy2(self.db_path, snapshot)
+            with sqlite3.connect(snapshot) as connection:
+                row = connection.execute(
+                    """
+                    select max(n.[Order])
+                    from Notification n
+                    join NotificationHandler h on h.RecordId = n.HandlerId
+                    where lower(h.PrimaryId) like '%whatsapp%'
+                    """
+                ).fetchone()
+            return int((row or [0])[0] or 0)
+        except (OSError, sqlite3.Error):
+            return 0
+        finally:
+            try:
+                snapshot.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def poll(self) -> list[WhatsAppNotification]:
+        events = self._read_since(self.last_order, limit=25)
+        for event in events:
+            self.last_order = max(self.last_order, event.order)
+        return [event for event in events if self.matches_chat(event)]
+
+    def matches_chat(self, event: WhatsAppNotification) -> bool:
+        title_key = event.title.casefold()
+        return self.chat_key == title_key or self.chat_key in title_key
+
+    def command_from(self, event: WhatsAppNotification) -> str:
+        body = event.body or (event.texts[1] if len(event.texts) > 1 else "")
+        body = html.unescape(body).strip()
+        sender_match = re.match(r"^([^:\n]{1,80}):\s+(.+)$", body, flags=re.DOTALL)
+        if sender_match and sender_match.group(1).strip().casefold() not in {"http", "https"}:
+            body = sender_match.group(2).strip()
+        body = re.sub(r"(?i)^\s*@?saturday\b[:,\-\s]*", "", body).strip()
+        if re.search(r"(?i)\b\d+\s+unread messages?\b", body):
+            return ""
+        return body
+
+    def _read_since(self, since_order: int, limit: int = 25, newest_first: bool = False) -> list[WhatsAppNotification]:
+        if not self.db_path.exists():
+            return []
+
+        snapshot = Path(tempfile.gettempdir()) / f"saturday_wpndatabase_{os.getpid()}_{time.time_ns()}.db"
+        try:
+            shutil.copy2(self.db_path, snapshot)
+            direction = "desc" if newest_first else "asc"
+            safe_limit = max(1, min(int(limit), 100))
+            with sqlite3.connect(snapshot) as connection:
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(
+                    f"""
+                    select n.[Order], n.ArrivalTime, n.Tag, n.Payload
+                    from Notification n
+                    join NotificationHandler h on h.RecordId = n.HandlerId
+                    where lower(h.PrimaryId) like '%whatsapp%'
+                      and n.PayloadType = 'Xml'
+                      and n.[Order] > ?
+                    order by n.[Order] {direction}
+                    limit ?
+                    """,
+                    (since_order, safe_limit),
+                ).fetchall()
+        except (OSError, sqlite3.Error):
+            return []
+        finally:
+            try:
+                snapshot.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        events = []
+        for row in rows:
+            texts = self._texts_from_payload(row["Payload"])
+            if len(texts) < 2:
+                continue
+            events.append(
+                WhatsAppNotification(
+                    order=int(row["Order"]),
+                    arrival_time=int(row["ArrivalTime"] or 0),
+                    title=texts[0],
+                    body=texts[1],
+                    texts=texts,
+                    tag=str(row["Tag"] or ""),
+                )
+            )
+        return events
+
+    @staticmethod
+    def _texts_from_payload(payload: Any) -> list[str]:
+        if isinstance(payload, bytes):
+            raw = payload.decode("utf-8", errors="ignore")
+        else:
+            raw = str(payload or "")
+        if not raw.strip().startswith("<"):
+            return []
+        try:
+            root = ElementTree.fromstring(raw)
+        except ElementTree.ParseError:
+            return []
+
+        texts = []
+        for node in root.iter():
+            if str(node.tag).rsplit("}", 1)[-1] != "text":
+                continue
+            value = "".join(node.itertext()).strip()
+            if value:
+                texts.append(html.unescape(value))
+        return texts
+
+
+class WhatsAppBridge:
+    def __init__(
+        self,
+        brain: AssistantBrain,
+        chat_name: str = DEFAULT_WHATSAPP_CHAT,
+        poll_seconds: float = 2.0,
+        announce: bool = True,
+        search_hotkey: str = "ctrl+f",
+    ):
+        self.brain = brain
+        self.chat_name = chat_name.strip() or DEFAULT_WHATSAPP_CHAT
+        self.poll_seconds = max(0.8, poll_seconds)
+        self.announce = announce
+        self.search_hotkey = self._parse_hotkey(search_hotkey)
+        self.poller = WhatsAppNotificationPoller(self.chat_name)
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.send_lock = threading.Lock()
+        self.pyautogui: Any | None = None
+
+    def start(self) -> None:
+        self.poller.prime()
+        self.thread = threading.Thread(target=self._run, name="SaturdayWhatsAppBridge", daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        print(f"WhatsApp bridge: watching notifications for '{self.chat_name}'.")
+        if self.announce:
+            self.send_message(
+                "Saturday is awake in this WhatsApp demo chat. Try: check my mail, show me the highest risk event, or send me the full report."
+            )
+
+        while not self.stop_event.is_set():
+            try:
+                for event in self.poller.poll():
+                    command = self.poller.command_from(event)
+                    if not command:
+                        continue
+                    print(f"WhatsApp command from {event.title}: {command[:90]}")
+                    reply = self.answer(command)
+                    self.send_message(reply)
+            except Exception as exc:
+                print(f"WhatsApp bridge paused after an automation error: {exc}")
+            self.stop_event.wait(self.poll_seconds)
+
+    def answer(self, message: str) -> str:
+        intent = self.brain.parse_intent(message)
+        result = self.brain.execute_intent(intent)
+        reply = str(result.get("message") or "Done.")
+        return f"Saturday:\n{reply}"[:1800]
+
+    def send_message(self, message: str) -> None:
+        if not sys.platform.startswith("win"):
+            print("WhatsApp bridge only runs on Windows.")
+            return
+
+        with self.send_lock:
+            gui = self._gui()
+            self.focus_chat(gui)
+            self._set_clipboard(message)
+            gui.hotkey("ctrl", "v")
+            time.sleep(0.16)
+            gui.press("enter")
+
+    def focus_chat(self, gui: Any) -> None:
+        self.launch_whatsapp()
+        time.sleep(float(os.getenv("SATURDAY_WHATSAPP_OPEN_WAIT", "2.6")))
+        gui.press("esc")
+        time.sleep(0.15)
+        gui.hotkey(*self.search_hotkey)
+        time.sleep(0.25)
+        self._set_clipboard(self.chat_name)
+        gui.hotkey("ctrl", "v")
+        time.sleep(0.25)
+        gui.press("enter")
+        time.sleep(0.65)
+
+    def launch_whatsapp(self) -> None:
+        app_id = os.getenv("SATURDAY_WHATSAPP_APP_ID", "").strip() or self._find_whatsapp_app_id()
+        if app_id:
+            subprocess.Popen(
+                ["explorer.exe", f"shell:AppsFolder\\{app_id}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+
+        try:
+            os.startfile("whatsapp:")  # type: ignore[attr-defined]
+        except OSError:
+            subprocess.Popen(["WhatsApp.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _find_whatsapp_app_id(self) -> str | None:
+        script = "Get-StartApps | Where-Object {$_.Name -like '*WhatsApp*'} | Select-Object -First 1 -ExpandProperty AppID"
+        try:
+            kwargs: dict[str, Any] = {
+                "capture_output": True,
+                "text": True,
+                "timeout": 5,
+            }
+            if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                **kwargs,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        value = result.stdout.strip().splitlines()
+        return value[0].strip() if value else None
+
+    def _gui(self) -> Any:
+        if self.pyautogui is None:
+            import pyautogui
+
+            pyautogui.PAUSE = 0.08
+            self.pyautogui = pyautogui
+        return self.pyautogui
+
+    def _set_clipboard(self, text: str) -> None:
+        try:
+            import pyperclip
+
+            pyperclip.copy(text)
+            return
+        except Exception:
+            pass
+
+        try:
+            import tkinter
+
+            root = tkinter.Tk()
+            root.withdraw()
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            root.update()
+            root.destroy()
+        except Exception as exc:
+            raise RuntimeError("Could not set clipboard for WhatsApp send") from exc
+
+    @staticmethod
+    def _parse_hotkey(value: str) -> tuple[str, ...]:
+        parts = tuple(part.strip().lower() for part in value.split("+") if part.strip())
+        return parts or ("ctrl", "f")
 
 
 def scan_imap(store: IncidentStore, risk: RiskEngine, limit: int = 15) -> dict[str, Any]:
@@ -1258,17 +1609,38 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--demo", action="store_true", help="Seed the local incident store with demo incidents on launch")
+    parser.add_argument("--whatsapp", action="store_true", help="Enable demo WhatsApp Desktop notification bridge")
+    parser.add_argument("--whatsapp-chat", default=os.getenv("SATURDAY_WHATSAPP_CHAT", DEFAULT_WHATSAPP_CHAT), help="WhatsApp group/chat name to watch")
+    parser.add_argument("--whatsapp-poll-seconds", type=float, default=float(os.getenv("SATURDAY_WHATSAPP_POLL_SECONDS", "2.0")), help="Seconds between notification checks")
+    parser.add_argument("--whatsapp-search-hotkey", default=os.getenv("SATURDAY_WHATSAPP_SEARCH_HOTKEY", "ctrl+f"), help="WhatsApp chat search shortcut, for example ctrl+f or ctrl+k")
+    parser.add_argument("--whatsapp-no-announce", action="store_true", help="Do not send the startup message to WhatsApp")
     args = parser.parse_args()
 
     port = choose_port(args.host, args.port)
     if args.demo:
         APP.demo.seed()
 
+    whatsapp_bridge: WhatsAppBridge | None = None
+    if args.whatsapp:
+        try:
+            whatsapp_bridge = WhatsAppBridge(
+                APP.brain,
+                chat_name=args.whatsapp_chat,
+                poll_seconds=args.whatsapp_poll_seconds,
+                announce=not args.whatsapp_no_announce,
+                search_hotkey=args.whatsapp_search_hotkey,
+            )
+            whatsapp_bridge.start()
+        except Exception as exc:
+            print(f"WhatsApp bridge could not start: {exc}")
+
     server = ThreadingHTTPServer((args.host, port), Handler)
     print("")
     print("Saturday is awake.")
     print(f"Dashboard: http://{args.host}:{port}/")
     print(f"Warning demo: http://{args.host}:{port}/warning?url=https%3A%2F%2Fg00gle-login.xyz%2Faccounts%2Fverify")
+    if whatsapp_bridge:
+        print(f"WhatsApp bridge: watching the '{args.whatsapp_chat}' chat.")
     if not APP.ai.enabled:
         print("OpenRouter is optional. Set OPENROUTER_API_KEY and OPENROUTER_MODEL to enable cloud explanations.")
     print("Press Ctrl+C to stop.")
@@ -1278,6 +1650,8 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nSaturday stopped.")
     finally:
+        if whatsapp_bridge:
+            whatsapp_bridge.stop_event.set()
         server.server_close()
 
 

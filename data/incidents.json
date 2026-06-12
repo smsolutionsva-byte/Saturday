@@ -102,8 +102,13 @@
     "attachments": [],
     "created_at": "2026-06-12T10:08:07+05:30",
     "time_label": "10:08",
-    "status": "pending",
-    "action_log": [],
+    "status": "quarantined",
+    "action_log": [
+      {
+        "at": "2026-06-12T07:30:57+00:00",
+        "action": "Quarantined locally; destructive IMAP deletion is disabled for demo safety"
+      }
+    ],
     "dedupe_key": "demo:Microsoft Account <help@micros0ft-security.live>:Password reset required"
   },
   {
@@ -126,5 +131,27 @@
     "status": "pending",
     "action_log": [],
     "dedupe_key": "demo:Campus Events <events@hackathon.local>:Sponsor booth schedule"
+  },
+  {
+    "id": "mail_20260612130015_716",
+    "kind": "email",
+    "source": "imap",
+    "title": "Google email detected",
+    "sender": "Emergent <hello@team.emergent.sh>",
+    "subject": "Welcome to Emergent: Your Unfair Advantage",
+    "snippet": "<!DOCTYPE html>\r\n\r\n<html lang=\"en\"><head><meta charset=\"utf-8\"/><meta content=\"width=device-width, initial-scale=1.0\" name=\"viewport\"/><meta name=\"x-apple-disable-message-reformatting\"/><meta content=\"light only\" name=\"c",
+    "risk_score": 38,
+    "reasons": [
+      "Message references Google, but sender is not an official Google domain",
+      "Payment or invoice language detected"
+    ],
+    "brand": "Google",
+    "official_url": "https://google.com",
+    "attachments": [],
+    "status": "pending",
+    "action_log": [],
+    "created_at": "2026-06-12T07:30:15+00:00",
+    "time_label": "13:00",
+    "dedupe_key": "imap:Emergent <hello@team.emergent.sh>:Welcome to Emergent: Your Unfair Advantage:6"
   }
 ]
